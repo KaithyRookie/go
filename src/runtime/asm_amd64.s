@@ -29,7 +29,7 @@ TEXT main(SB),NOSPLIT,$-8
 // c-archive) or when the shared library is loaded (for c-shared).
 // We expect argc and argv to be passed in the usual C ABI registers
 // DI and SI.
-TEXT _rt0_amd64_lib(SB),NOSPLIT,$0
+TEXT _rt0_amd64_lib(SB),NOSPLIT|NOFRAME,$0
 	// Transition from C ABI to Go ABI.
 	PUSH_REGS_HOST_TO_ABI0()
 
@@ -136,16 +136,27 @@ GLOBL bad_cpu_msg<>(SB), RODATA, $84
 #define NEED_EXT_FEATURES_CX V4_EXT_FEATURES_CX
 #define NEED_EXT_FEATURES_BX V4_EXT_FEATURES_BX
 
-// Downgrading v4 OS checks on Darwin for now, see CL 285572.
+// Darwin requires a different approach to check AVX512 support, see CL 285572.
 #ifdef GOOS_darwin
 #define NEED_OS_SUPPORT_AX V3_OS_SUPPORT_AX
+// These values are from:
+// https://github.com/apple/darwin-xnu/blob/xnu-4570.1.46/osfmk/i386/cpu_capabilities.h
+#define commpage64_base_address         0x00007fffffe00000
+#define commpage64_cpu_capabilities64   (commpage64_base_address+0x010)
+#define commpage64_version              (commpage64_base_address+0x01E)
+#define hasAVX512F                      0x0000004000000000
+#define hasAVX512CD                     0x0000008000000000
+#define hasAVX512DQ                     0x0000010000000000
+#define hasAVX512BW                     0x0000020000000000
+#define hasAVX512VL                     0x0000100000000000
+#define NEED_DARWIN_SUPPORT             (hasAVX512F | hasAVX512DQ | hasAVX512CD | hasAVX512BW | hasAVX512VL)
 #else
 #define NEED_OS_SUPPORT_AX V4_OS_SUPPORT_AX
 #endif
 
 #endif
 
-TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
+TEXT runtime·rt0_go(SB),NOSPLIT|NOFRAME|TOPFRAME,$0
 	// copy arguments forward on an even stack
 	MOVQ	DI, AX		// argc
 	MOVQ	SI, BX		// argv
@@ -157,7 +168,7 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
 	MOVQ	$runtime·g0(SB), DI
-	LEAQ	(-64*1024+104)(SP), BX
+	LEAQ	(-64*1024)(SP), BX
 	MOVQ	BX, g_stackguard0(DI)
 	MOVQ	BX, g_stackguard1(DI)
 	MOVQ	BX, (g_stack+stack_lo)(DI)
@@ -190,16 +201,16 @@ nocpuinfo:
 	JZ	needtls
 	// arg 1: g0, already in DI
 	MOVQ	$setg_gcc<>(SB), SI // arg 2: setg_gcc
+	MOVQ	$0, DX	// arg 3, 4: not used when using platform's TLS
+	MOVQ	$0, CX
 #ifdef GOOS_android
 	MOVQ	$runtime·tls_g(SB), DX 	// arg 3: &tls_g
 	// arg 4: TLS base, stored in slot 0 (Android's TLS_SLOT_SELF).
 	// Compensate for tls_g (+16).
 	MOVQ	-16(TLS), CX
-#else
-	MOVQ	$0, DX	// arg 3, 4: not used when using platform's TLS
-	MOVQ	$0, CX
 #endif
 #ifdef GOOS_windows
+	MOVQ	$runtime·tls_g(SB), DX 	// arg 3: &tls_g
 	// Adjust for the Win64 calling convention.
 	MOVQ	CX, R9 // arg 4
 	MOVQ	DX, R8 // arg 3
@@ -240,6 +251,10 @@ needtls:
 	JMP ok
 #endif
 
+#ifdef GOOS_windows
+	CALL	runtime·wintls(SB)
+#endif
+
 	LEAQ	runtime·m0+m_tls(SB), DI
 	CALL	runtime·settls(SB)
 
@@ -264,7 +279,7 @@ ok:
 
 	CLD				// convention is D is always left cleared
 
-	// Check GOAMD64 reqirements
+	// Check GOAMD64 requirements
 	// We need to do this after setting up TLS, so that
 	// we can report an error if there is a failure. See issue 49586.
 #ifdef NEED_FEATURES_CX
@@ -308,6 +323,18 @@ ok:
 	XGETBV
 	ANDL	$NEED_OS_SUPPORT_AX, AX
 	CMPL	AX, $NEED_OS_SUPPORT_AX
+	JNE	bad_cpu
+#endif
+
+#ifdef NEED_DARWIN_SUPPORT
+	MOVQ	$commpage64_version, BX
+	CMPW	(BX), $13  // cpu_capabilities64 undefined in versions < 13
+	JL	bad_cpu
+	MOVQ	$commpage64_cpu_capabilities64, BX
+	MOVQ	(BX), BX
+	MOVQ	$NEED_DARWIN_SUPPORT, CX
+	ANDQ	CX, BX
+	CMPQ	BX, CX
 	JNE	bad_cpu
 #endif
 
@@ -363,7 +390,7 @@ TEXT runtime·asminit(SB),NOSPLIT,$0-0
 	// No per-thread init.
 	RET
 
-TEXT runtime·mstart(SB),NOSPLIT|TOPFRAME,$0
+TEXT runtime·mstart(SB),NOSPLIT|TOPFRAME|NOFRAME,$0
 	CALL	runtime·mstart0(SB)
 	RET // not reached
 
@@ -398,7 +425,7 @@ TEXT gogo<>(SB), NOSPLIT, $0
 // Switch to m->g0's stack, call fn(g).
 // Fn must never return. It should gogo(&g->sched)
 // to keep running g.
-TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT, $0-8
+TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT|NOFRAME, $0-8
 	MOVQ	AX, DX	// DX = fn
 
 	// save state in g->sched
@@ -436,7 +463,7 @@ TEXT runtime·systemstack_switch(SB), NOSPLIT, $0-0
 	RET
 
 // func systemstack(fn func())
-TEXT runtime·systemstack(SB), NOSPLIT, $0-8
+TEXT runtime·systemstack(SB), NOSPLIT|NOFRAME, $0-8
 	MOVQ	fn+0(FP), DI	// DI = fn
 	get_tls(CX)
 	MOVQ	g(CX), AX	// AX = g
@@ -503,7 +530,7 @@ bad:
 // the top of a stack (for example, morestack calling newstack
 // calling the scheduler calling newm calling gc), so we must
 // record an argument size. For that purpose, it has no arguments.
-TEXT runtime·morestack(SB),NOSPLIT,$0-0
+TEXT runtime·morestack(SB),NOSPLIT|NOFRAME,$0-0
 	// Cannot grow scheduler stack (m->g0).
 	get_tls(CX)
 	MOVQ	g(CX), BX
@@ -735,7 +762,7 @@ again:
 	RET
 
 
-TEXT ·publicationBarrier(SB),NOSPLIT,$0-0
+TEXT ·publicationBarrier<ABIInternal>(SB),NOSPLIT,$0-0
 	// Stores are already ordered on x86, so this is just a
 	// compile barrier.
 	RET
@@ -745,7 +772,7 @@ TEXT ·publicationBarrier(SB),NOSPLIT,$0-0
 // Must only be called from functions with no locals ($0)
 // or else unwinding from systemstack_switch is incorrect.
 // Smashes R9.
-TEXT gosave_systemstack_switch<>(SB),NOSPLIT,$0
+TEXT gosave_systemstack_switch<>(SB),NOSPLIT|NOFRAME,$0
 	MOVQ	$runtime·systemstack_switch(SB), R9
 	MOVQ	R9, (g_sched+gobuf_pc)(R14)
 	LEAQ	8(SP), R9
@@ -762,7 +789,7 @@ TEXT gosave_systemstack_switch<>(SB),NOSPLIT,$0
 // func asmcgocall_no_g(fn, arg unsafe.Pointer)
 // Call fn(arg) aligned appropriately for the gcc ABI.
 // Called on a system stack, and there may be no g yet (during needm).
-TEXT ·asmcgocall_no_g(SB),NOSPLIT,$0-16
+TEXT ·asmcgocall_no_g(SB),NOSPLIT|NOFRAME,$0-16
 	MOVQ	fn+0(FP), AX
 	MOVQ	arg+8(FP), BX
 	MOVQ	SP, DX
@@ -780,7 +807,7 @@ TEXT ·asmcgocall_no_g(SB),NOSPLIT,$0-16
 // Call fn(arg) on the scheduler stack,
 // aligned appropriately for the gcc ABI.
 // See cgocall.go for more details.
-TEXT ·asmcgocall(SB),NOSPLIT,$0-20
+TEXT ·asmcgocall(SB),NOSPLIT|NOFRAME,$0-20
 	MOVQ	fn+0(FP), AX
 	MOVQ	arg+8(FP), BX
 
@@ -1036,7 +1063,7 @@ loop:
 	JMP	loop
 
 // check that SP is in range [g->stack.lo, g->stack.hi)
-TEXT runtime·stackcheck(SB), NOSPLIT, $0-0
+TEXT runtime·stackcheck(SB), NOSPLIT|NOFRAME, $0-0
 	get_tls(CX)
 	MOVQ	g(CX), AX
 	CMPQ	(g_stack+stack_hi)(AX), SP
@@ -1567,7 +1594,7 @@ TEXT _cgo_topofstack(SB),NOSPLIT,$0
 
 // The top-most function running on a goroutine
 // returns to goexit+PCQuantum.
-TEXT runtime·goexit(SB),NOSPLIT|TOPFRAME,$0-0
+TEXT runtime·goexit(SB),NOSPLIT|TOPFRAME|NOFRAME,$0-0
 	BYTE	$0x90	// NOP
 	CALL	runtime·goexit1(SB)	// does not return
 	// traceback from goexit1 must hit code range of goexit
@@ -1684,7 +1711,7 @@ flush:
 
 // gcWriteBarrierCX is gcWriteBarrier, but with args in DI and CX.
 // Defined as ABIInternal since it does not use the stable Go ABI.
-TEXT runtime·gcWriteBarrierCX<ABIInternal>(SB),NOSPLIT,$0
+TEXT runtime·gcWriteBarrierCX<ABIInternal>(SB),NOSPLIT|NOFRAME,$0
 	XCHGQ CX, AX
 	CALL runtime·gcWriteBarrier<ABIInternal>(SB)
 	XCHGQ CX, AX
@@ -1692,7 +1719,7 @@ TEXT runtime·gcWriteBarrierCX<ABIInternal>(SB),NOSPLIT,$0
 
 // gcWriteBarrierDX is gcWriteBarrier, but with args in DI and DX.
 // Defined as ABIInternal since it does not use the stable Go ABI.
-TEXT runtime·gcWriteBarrierDX<ABIInternal>(SB),NOSPLIT,$0
+TEXT runtime·gcWriteBarrierDX<ABIInternal>(SB),NOSPLIT|NOFRAME,$0
 	XCHGQ DX, AX
 	CALL runtime·gcWriteBarrier<ABIInternal>(SB)
 	XCHGQ DX, AX
@@ -1700,7 +1727,7 @@ TEXT runtime·gcWriteBarrierDX<ABIInternal>(SB),NOSPLIT,$0
 
 // gcWriteBarrierBX is gcWriteBarrier, but with args in DI and BX.
 // Defined as ABIInternal since it does not use the stable Go ABI.
-TEXT runtime·gcWriteBarrierBX<ABIInternal>(SB),NOSPLIT,$0
+TEXT runtime·gcWriteBarrierBX<ABIInternal>(SB),NOSPLIT|NOFRAME,$0
 	XCHGQ BX, AX
 	CALL runtime·gcWriteBarrier<ABIInternal>(SB)
 	XCHGQ BX, AX
@@ -1708,7 +1735,7 @@ TEXT runtime·gcWriteBarrierBX<ABIInternal>(SB),NOSPLIT,$0
 
 // gcWriteBarrierBP is gcWriteBarrier, but with args in DI and BP.
 // Defined as ABIInternal since it does not use the stable Go ABI.
-TEXT runtime·gcWriteBarrierBP<ABIInternal>(SB),NOSPLIT,$0
+TEXT runtime·gcWriteBarrierBP<ABIInternal>(SB),NOSPLIT|NOFRAME,$0
 	XCHGQ BP, AX
 	CALL runtime·gcWriteBarrier<ABIInternal>(SB)
 	XCHGQ BP, AX
@@ -1716,7 +1743,7 @@ TEXT runtime·gcWriteBarrierBP<ABIInternal>(SB),NOSPLIT,$0
 
 // gcWriteBarrierSI is gcWriteBarrier, but with args in DI and SI.
 // Defined as ABIInternal since it does not use the stable Go ABI.
-TEXT runtime·gcWriteBarrierSI<ABIInternal>(SB),NOSPLIT,$0
+TEXT runtime·gcWriteBarrierSI<ABIInternal>(SB),NOSPLIT|NOFRAME,$0
 	XCHGQ SI, AX
 	CALL runtime·gcWriteBarrier<ABIInternal>(SB)
 	XCHGQ SI, AX
@@ -1724,7 +1751,7 @@ TEXT runtime·gcWriteBarrierSI<ABIInternal>(SB),NOSPLIT,$0
 
 // gcWriteBarrierR8 is gcWriteBarrier, but with args in DI and R8.
 // Defined as ABIInternal since it does not use the stable Go ABI.
-TEXT runtime·gcWriteBarrierR8<ABIInternal>(SB),NOSPLIT,$0
+TEXT runtime·gcWriteBarrierR8<ABIInternal>(SB),NOSPLIT|NOFRAME,$0
 	XCHGQ R8, AX
 	CALL runtime·gcWriteBarrier<ABIInternal>(SB)
 	XCHGQ R8, AX
@@ -1732,7 +1759,7 @@ TEXT runtime·gcWriteBarrierR8<ABIInternal>(SB),NOSPLIT,$0
 
 // gcWriteBarrierR9 is gcWriteBarrier, but with args in DI and R9.
 // Defined as ABIInternal since it does not use the stable Go ABI.
-TEXT runtime·gcWriteBarrierR9<ABIInternal>(SB),NOSPLIT,$0
+TEXT runtime·gcWriteBarrierR9<ABIInternal>(SB),NOSPLIT|NOFRAME,$0
 	XCHGQ R9, AX
 	CALL runtime·gcWriteBarrier<ABIInternal>(SB)
 	XCHGQ R9, AX
@@ -1752,7 +1779,7 @@ GLOBL	debugCallFrameTooLarge<>(SB), RODATA, $20	// Size duplicated below
 // 2. Push the current PC on the stack (updating SP).
 // 3. Write the desired argument frame size at SP-16 (using the SP
 //    after step 2).
-// 4. Save all machine registers (including flags and XMM reigsters)
+// 4. Save all machine registers (including flags and XMM registers)
 //    so they can be restored later by the debugger.
 // 5. Set the PC to debugCallV2 and resume execution.
 //
@@ -2003,6 +2030,9 @@ TEXT runtime·panicSliceConvert<ABIInternal>(SB),NOSPLIT,$0-16
 DATA runtime·tls_g+0(SB)/8, $16
 GLOBL runtime·tls_g+0(SB), NOPTR, $8
 #endif
+#ifdef GOOS_windows
+GLOBL runtime·tls_g+0(SB), NOPTR, $8
+#endif
 
 // The compiler and assembler's -spectre=ret mode rewrites
 // all indirect CALL AX / JMP AX instructions to be
@@ -2018,19 +2048,19 @@ GLOBL runtime·tls_g+0(SB), NOPTR, $8
 	                        BYTE $0x04|((reg&7)<<3); BYTE $0x24;			\
 	/*   RET */             BYTE $0xC3
 
-TEXT runtime·retpolineAX(SB),NOSPLIT,$0; RETPOLINE(0)
-TEXT runtime·retpolineCX(SB),NOSPLIT,$0; RETPOLINE(1)
-TEXT runtime·retpolineDX(SB),NOSPLIT,$0; RETPOLINE(2)
-TEXT runtime·retpolineBX(SB),NOSPLIT,$0; RETPOLINE(3)
+TEXT runtime·retpolineAX(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(0)
+TEXT runtime·retpolineCX(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(1)
+TEXT runtime·retpolineDX(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(2)
+TEXT runtime·retpolineBX(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(3)
 /* SP is 4, can't happen / magic encodings */
-TEXT runtime·retpolineBP(SB),NOSPLIT,$0; RETPOLINE(5)
-TEXT runtime·retpolineSI(SB),NOSPLIT,$0; RETPOLINE(6)
-TEXT runtime·retpolineDI(SB),NOSPLIT,$0; RETPOLINE(7)
-TEXT runtime·retpolineR8(SB),NOSPLIT,$0; RETPOLINE(8)
-TEXT runtime·retpolineR9(SB),NOSPLIT,$0; RETPOLINE(9)
-TEXT runtime·retpolineR10(SB),NOSPLIT,$0; RETPOLINE(10)
-TEXT runtime·retpolineR11(SB),NOSPLIT,$0; RETPOLINE(11)
-TEXT runtime·retpolineR12(SB),NOSPLIT,$0; RETPOLINE(12)
-TEXT runtime·retpolineR13(SB),NOSPLIT,$0; RETPOLINE(13)
-TEXT runtime·retpolineR14(SB),NOSPLIT,$0; RETPOLINE(14)
-TEXT runtime·retpolineR15(SB),NOSPLIT,$0; RETPOLINE(15)
+TEXT runtime·retpolineBP(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(5)
+TEXT runtime·retpolineSI(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(6)
+TEXT runtime·retpolineDI(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(7)
+TEXT runtime·retpolineR8(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(8)
+TEXT runtime·retpolineR9(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(9)
+TEXT runtime·retpolineR10(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(10)
+TEXT runtime·retpolineR11(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(11)
+TEXT runtime·retpolineR12(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(12)
+TEXT runtime·retpolineR13(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(13)
+TEXT runtime·retpolineR14(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(14)
+TEXT runtime·retpolineR15(SB),NOSPLIT|NOFRAME,$0; RETPOLINE(15)

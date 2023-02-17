@@ -50,6 +50,9 @@ func (e *escape) stmt(n ir.Node) {
 
 	case ir.OLABEL:
 		n := n.(*ir.LabelStmt)
+		if n.Label.IsBlank() {
+			break
+		}
 		switch e.labels[n.Label] {
 		case nonlooping:
 			if base.Flag.LowerM > 2 {
@@ -71,7 +74,11 @@ func (e *escape) stmt(n ir.Node) {
 		e.block(n.Body)
 		e.block(n.Else)
 
-	case ir.OFOR, ir.OFORUNTIL:
+	case ir.OCHECKNIL:
+		n := n.(*ir.UnaryExpr)
+		e.discard(n.X)
+
+	case ir.OFOR:
 		n := n.(*ir.ForStmt)
 		e.loopDepth++
 		e.discard(n.Cond)
@@ -173,7 +180,7 @@ func (e *escape) stmt(n ir.Node) {
 			dsts[i] = res.Nname.(*ir.Name)
 		}
 		e.assignList(dsts, n.Results, "return", n)
-	case ir.OCALLFUNC, ir.OCALLMETH, ir.OCALLINTER, ir.OINLCALL, ir.OCLOSE, ir.OCOPY, ir.ODELETE, ir.OPANIC, ir.OPRINT, ir.OPRINTN, ir.ORECOVER:
+	case ir.OCALLFUNC, ir.OCALLMETH, ir.OCALLINTER, ir.OINLCALL, ir.OCLEAR, ir.OCLOSE, ir.OCOPY, ir.ODELETE, ir.OPANIC, ir.OPRINT, ir.OPRINTN, ir.ORECOVER:
 		e.call(nil, n)
 	case ir.OGO, ir.ODEFER:
 		n := n.(*ir.GoDeferStmt)

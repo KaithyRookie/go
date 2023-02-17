@@ -23,7 +23,6 @@
 // Use Info.Types[expr].Type for the results of type inference.
 //
 // For a tutorial, see https://golang.org/s/types-tutorial.
-//
 package types
 
 import (
@@ -32,9 +31,8 @@ import (
 	"go/ast"
 	"go/constant"
 	"go/token"
+	. "internal/types/errors"
 )
-
-const allowTypeLists = false
 
 // An Error describes a type-checking error; it implements the error interface.
 // A "soft" error is an error that still permits a valid interpretation of a
@@ -51,7 +49,7 @@ type Error struct {
 	// to preview this feature may read go116code using reflection (see
 	// errorcodes_test.go), but beware that there is no guarantee of future
 	// compatibility.
-	go116code  errorCode
+	go116code  Code
 	go116start token.Pos
 	go116end   token.Pos
 }
@@ -145,6 +143,9 @@ type Config struct {
 	// It is an error to set both FakeImportC and go115UsesCgo.
 	go115UsesCgo bool
 
+	// If _Trace is set, a debug trace is printed to stdout.
+	_Trace bool
+
 	// If Error != nil, it is called with each error found
 	// during type checking; err has dynamic type Error.
 	// Secondary errors (for instance, to enumerate all types
@@ -199,12 +200,12 @@ type Info struct {
 	// qualified identifiers are collected in the Uses map.
 	Types map[ast.Expr]TypeAndValue
 
-	// Instances maps identifiers denoting parameterized types or functions to
-	// their type arguments and instantiated type.
+	// Instances maps identifiers denoting generic types or functions to their
+	// type arguments and instantiated type.
 	//
 	// For example, Instances will map the identifier for 'T' in the type
 	// instantiation T[int, string] to the type arguments [int, string] and
-	// resulting instantiated *Named type. Given a parameterized function
+	// resulting instantiated *Named type. Given a generic function
 	// func F[A any](A), Instances will map the identifier for 'F' in the call
 	// expression F(int(1)) to the inferred type arguments [int], and resulting
 	// instantiated *Signature.
@@ -282,7 +283,6 @@ type Info struct {
 
 // TypeOf returns the type of expression e, or nil if not found.
 // Precondition: the Types, Uses and Defs maps are populated.
-//
 func (info *Info) TypeOf(e ast.Expr) Type {
 	if t, ok := info.Types[e]; ok {
 		return t.Type
@@ -302,7 +302,6 @@ func (info *Info) TypeOf(e ast.Expr) Type {
 // it defines, not the type (*TypeName) it uses.
 //
 // Precondition: the Uses and Defs maps are populated.
-//
 func (info *Info) ObjectOf(id *ast.Ident) Object {
 	if obj := info.Defs[id]; obj != nil {
 		return obj
@@ -417,31 +416,46 @@ func (conf *Config) Check(path string, fset *token.FileSet, files []*ast.File, i
 }
 
 // AssertableTo reports whether a value of type V can be asserted to have type T.
-// The behavior of AssertableTo is undefined if V is a generalized interface; i.e.,
-// an interface that may only be used as a type constraint in Go code.
+//
+// The behavior of AssertableTo is unspecified in three cases:
+//   - if T is Typ[Invalid]
+//   - if V is a generalized interface; i.e., an interface that may only be used
+//     as a type constraint in Go code
+//   - if T is an uninstantiated generic type
 func AssertableTo(V *Interface, T Type) bool {
 	// Checker.newAssertableTo suppresses errors for invalid types, so we need special
 	// handling here.
 	if T.Underlying() == Typ[Invalid] {
 		return false
 	}
-	return (*Checker)(nil).newAssertableTo(V, T) == nil
+	return (*Checker)(nil).newAssertableTo(V, T)
 }
 
-// AssignableTo reports whether a value of type V is assignable to a variable of type T.
+// AssignableTo reports whether a value of type V is assignable to a variable
+// of type T.
+//
+// The behavior of AssignableTo is unspecified if V or T is Typ[Invalid] or an
+// uninstantiated generic type.
 func AssignableTo(V, T Type) bool {
 	x := operand{mode: value, typ: V}
 	ok, _ := x.assignableTo(nil, T, nil) // check not needed for non-constant x
 	return ok
 }
 
-// ConvertibleTo reports whether a value of type V is convertible to a value of type T.
+// ConvertibleTo reports whether a value of type V is convertible to a value of
+// type T.
+//
+// The behavior of ConvertibleTo is unspecified if V or T is Typ[Invalid] or an
+// uninstantiated generic type.
 func ConvertibleTo(V, T Type) bool {
 	x := operand{mode: value, typ: V}
 	return x.convertibleTo(nil, T, nil) // check not needed for non-constant x
 }
 
 // Implements reports whether type V implements interface T.
+//
+// The behavior of Implements is unspecified if V is Typ[Invalid] or an uninstantiated
+// generic type.
 func Implements(V Type, T *Interface) bool {
 	if T.Empty() {
 		// All types (even Typ[Invalid]) implement the empty interface.
@@ -452,17 +466,28 @@ func Implements(V Type, T *Interface) bool {
 	if V.Underlying() == Typ[Invalid] {
 		return false
 	}
-	return (*Checker)(nil).implements(V, T) == nil
+	return (*Checker)(nil).implements(V, T, false, nil)
+}
+
+// Satisfies reports whether type V satisfies the constraint T.
+//
+// The behavior of Satisfies is unspecified if V is Typ[Invalid] or an uninstantiated
+// generic type.
+func Satisfies(V Type, T *Interface) bool {
+	return (*Checker)(nil).implements(V, T, true, nil)
 }
 
 // Identical reports whether x and y are identical types.
 // Receivers of Signature types are ignored.
 func Identical(x, y Type) bool {
-	return identical(x, y, true, nil)
+	var c comparer
+	return c.identical(x, y, nil)
 }
 
 // IdenticalIgnoreTags reports whether x and y are identical types if tags are ignored.
 // Receivers of Signature types are ignored.
 func IdenticalIgnoreTags(x, y Type) bool {
-	return identical(x, y, false, nil)
+	var c comparer
+	c.ignoreTags = true
+	return c.identical(x, y, nil)
 }

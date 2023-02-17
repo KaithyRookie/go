@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"reflect"
@@ -793,13 +792,14 @@ func (ws *workerServer) fuzz(ctx context.Context, args fuzzArgs) (resp fuzzRespo
 
 func (ws *workerServer) minimize(ctx context.Context, args minimizeArgs) (resp minimizeResponse) {
 	start := time.Now()
-	defer func() { resp.Duration = time.Now().Sub(start) }()
+	defer func() { resp.Duration = time.Since(start) }()
 	mem := <-ws.memMu
 	defer func() { ws.memMu <- mem }()
 	vals, err := unmarshalCorpusFile(mem.valueCopy())
 	if err != nil {
 		panic(err)
 	}
+	inpHash := sha256.Sum256(mem.valueCopy())
 	if args.Timeout != 0 {
 		var cancel func()
 		ctx, cancel = context.WithTimeout(ctx, args.Timeout)
@@ -811,12 +811,22 @@ func (ws *workerServer) minimize(ctx context.Context, args minimizeArgs) (resp m
 	success, err := ws.minimizeInput(ctx, vals, mem, args)
 	if success {
 		writeToMem(vals, mem)
+		outHash := sha256.Sum256(mem.valueCopy())
 		mem.header().rawInMem = false
 		resp.WroteToMem = true
 		if err != nil {
 			resp.Err = err.Error()
 		} else {
-			resp.CoverageData = coverageSnapshot
+			// If the values didn't change during minimization then coverageSnapshot is likely
+			// a dirty snapshot which represents the very last step of minimization, not the
+			// coverage for the initial input. In that case just return the coverage we were
+			// given initially, since it more accurately represents the coverage map for the
+			// input we are returning.
+			if outHash != inpHash {
+				resp.CoverageData = coverageSnapshot
+			} else {
+				resp.CoverageData = args.KeepCoverage
+			}
 		}
 	}
 	return resp
@@ -883,7 +893,8 @@ func (ws *workerServer) minimizeInput(ctx context.Context, vals []any, mem *shar
 			}
 			return true
 		}
-		if keepCoverage != nil && hasCoverageBit(keepCoverage, coverageSnapshot) {
+		// Minimization should preserve coverage bits.
+		if keepCoverage != nil && isCoverageSubset(keepCoverage, coverageSnapshot) {
 			return true
 		}
 		vals[args.Index] = prev
@@ -946,7 +957,7 @@ func (wc *workerClient) Close() error {
 
 	// Drain fuzzOut and close it. When the server exits, the kernel will close
 	// its end of fuzzOut, and we'll get EOF.
-	if _, err := io.Copy(ioutil.Discard, wc.fuzzOut); err != nil {
+	if _, err := io.Copy(io.Discard, wc.fuzzOut); err != nil {
 		wc.fuzzOut.Close()
 		return err
 	}

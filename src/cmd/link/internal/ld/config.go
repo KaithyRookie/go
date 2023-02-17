@@ -8,6 +8,7 @@ import (
 	"cmd/internal/sys"
 	"fmt"
 	"internal/buildcfg"
+	"internal/platform"
 )
 
 // A BuildMode indicates the sort of object we are building.
@@ -26,10 +27,9 @@ const (
 	BuildModePlugin
 )
 
+// Set implements flag.Value to set the build mode based on the argument
+// to the -buildmode flag.
 func (mode *BuildMode) Set(s string) error {
-	badmode := func() error {
-		return fmt.Errorf("buildmode %s not supported on %s/%s", s, buildcfg.GOOS, buildcfg.GOARCH)
-	}
 	switch s {
 	default:
 		return fmt.Errorf("invalid buildmode: %q", s)
@@ -41,81 +41,21 @@ func (mode *BuildMode) Set(s string) error {
 			*mode = BuildModeExe
 		}
 	case "pie":
-		switch buildcfg.GOOS {
-		case "aix", "android", "linux", "windows", "darwin", "ios":
-		case "freebsd":
-			switch buildcfg.GOARCH {
-			case "amd64":
-			default:
-				return badmode()
-			}
-		default:
-			return badmode()
-		}
 		*mode = BuildModePIE
 	case "c-archive":
-		switch buildcfg.GOOS {
-		case "aix", "darwin", "ios", "linux":
-		case "freebsd":
-			switch buildcfg.GOARCH {
-			case "amd64":
-			default:
-				return badmode()
-			}
-		case "windows":
-			switch buildcfg.GOARCH {
-			case "amd64", "386", "arm", "arm64":
-			default:
-				return badmode()
-			}
-		default:
-			return badmode()
-		}
 		*mode = BuildModeCArchive
 	case "c-shared":
-		switch buildcfg.GOARCH {
-		case "386", "amd64", "arm", "arm64", "ppc64le", "riscv64", "s390x":
-		default:
-			return badmode()
-		}
 		*mode = BuildModeCShared
 	case "shared":
-		switch buildcfg.GOOS {
-		case "linux":
-			switch buildcfg.GOARCH {
-			case "386", "amd64", "arm", "arm64", "ppc64le", "s390x":
-			default:
-				return badmode()
-			}
-		default:
-			return badmode()
-		}
 		*mode = BuildModeShared
 	case "plugin":
-		switch buildcfg.GOOS {
-		case "linux":
-			switch buildcfg.GOARCH {
-			case "386", "amd64", "arm", "arm64", "s390x", "ppc64le":
-			default:
-				return badmode()
-			}
-		case "darwin":
-			switch buildcfg.GOARCH {
-			case "amd64", "arm64":
-			default:
-				return badmode()
-			}
-		case "freebsd":
-			switch buildcfg.GOARCH {
-			case "amd64":
-			default:
-				return badmode()
-			}
-		default:
-			return badmode()
-		}
 		*mode = BuildModePlugin
 	}
+
+	if !platform.BuildModeSupported("gc", s, buildcfg.GOOS, buildcfg.GOARCH) {
+		return fmt.Errorf("buildmode %s not supported on %s/%s", s, buildcfg.GOOS, buildcfg.GOARCH)
+	}
+
 	return nil
 }
 
@@ -185,7 +125,7 @@ func mustLinkExternal(ctxt *Link) (res bool, reason string) {
 		}()
 	}
 
-	if sys.MustLinkExternal(buildcfg.GOOS, buildcfg.GOARCH) {
+	if platform.MustLinkExternal(buildcfg.GOOS, buildcfg.GOARCH) {
 		return true, fmt.Sprintf("%s/%s requires external linking", buildcfg.GOOS, buildcfg.GOARCH)
 	}
 
@@ -199,7 +139,7 @@ func mustLinkExternal(ctxt *Link) (res bool, reason string) {
 
 	// Internally linking cgo is incomplete on some architectures.
 	// https://golang.org/issue/14449
-	if iscgo && ctxt.Arch.InFamily(sys.MIPS64, sys.MIPS, sys.RISCV64) {
+	if iscgo && ctxt.Arch.InFamily(sys.Loong64, sys.MIPS64, sys.MIPS, sys.RISCV64) {
 		return true, buildcfg.GOARCH + " does not support internal cgo"
 	}
 	if iscgo && (buildcfg.GOOS == "android" || buildcfg.GOOS == "dragonfly") {
@@ -244,6 +184,15 @@ func mustLinkExternal(ctxt *Link) (res bool, reason string) {
 
 	if unknownObjFormat {
 		return true, "some input objects have an unrecognized file format"
+	}
+
+	if len(dynimportfail) > 0 {
+		// This error means that we were unable to generate
+		// the _cgo_import.go file for some packages.
+		// This typically means that there are some dependencies
+		// that the cgo tool could not figure out.
+		// See issue #52863.
+		return true, fmt.Sprintf("some packages could not be built to support internal linking (%v)", dynimportfail)
 	}
 
 	return false, ""

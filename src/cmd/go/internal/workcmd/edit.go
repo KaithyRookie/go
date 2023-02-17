@@ -84,9 +84,8 @@ writing it back to go.mod. The JSON output corresponds to these Go types:
 		Version string
 	}
 
-See the workspaces design proposal at
-https://go.googlesource.com/proposal/+/master/design/45713-workspace.md for
-more information.
+See the workspaces reference at https://go.dev/ref/mod#workspaces
+for more information.
 `,
 }
 
@@ -110,6 +109,7 @@ func init() {
 	cmdEdit.Flag.Var(flagFunc(flagEditworkDropUse), "dropuse", "")
 	cmdEdit.Flag.Var(flagFunc(flagEditworkReplace), "replace", "")
 	cmdEdit.Flag.Var(flagFunc(flagEditworkDropReplace), "dropreplace", "")
+	base.AddChdirFlag(&cmdEdit.Flag)
 }
 
 func runEditwork(ctx context.Context, cmd *base.Command, args []string) {
@@ -220,10 +220,11 @@ func allowedVersionArg(arg string) bool {
 // parsePathVersionOptional parses path[@version], using adj to
 // describe any errors.
 func parsePathVersionOptional(adj, arg string, allowDirPath bool) (path, version string, err error) {
-	if i := strings.Index(arg, "@"); i < 0 {
+	before, after, found := strings.Cut(arg, "@")
+	if !found {
 		path = arg
 	} else {
-		path, version = strings.TrimSpace(arg[:i]), strings.TrimSpace(arg[i+1:])
+		path, version = strings.TrimSpace(before), strings.TrimSpace(after)
 	}
 	if err := module.CheckImportPath(path); err != nil {
 		if !allowDirPath || !modfile.IsDirectoryPath(path) {
@@ -236,13 +237,13 @@ func parsePathVersionOptional(adj, arg string, allowDirPath bool) (path, version
 	return path, version, nil
 }
 
-// flagReplace implements the -replace flag.
+// flagEditworkReplace implements the -replace flag.
 func flagEditworkReplace(arg string) {
-	var i int
-	if i = strings.Index(arg, "="); i < 0 {
+	before, after, found := strings.Cut(arg, "=")
+	if !found {
 		base.Fatalf("go: -replace=%s: need old[@v]=new[@w] (missing =)", arg)
 	}
-	old, new := strings.TrimSpace(arg[:i]), strings.TrimSpace(arg[i+1:])
+	old, new := strings.TrimSpace(before), strings.TrimSpace(after)
 	if strings.HasPrefix(new, ">") {
 		base.Fatalf("go: -replace=%s: separator between old and new is =, not =>", arg)
 	}
@@ -265,7 +266,7 @@ func flagEditworkReplace(arg string) {
 	})
 }
 
-// flagDropReplace implements the -dropreplace flag.
+// flagEditworkDropReplace implements the -dropreplace flag.
 func flagEditworkDropReplace(arg string) {
 	path, version, err := parsePathVersionOptional("old", arg, true)
 	if err != nil {

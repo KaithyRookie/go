@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"internal/abi"
+	"runtime/internal/atomic"
 	"unsafe"
 )
 
@@ -17,85 +18,100 @@ import (
 
 //go:linkname syscall_syscall syscall.syscall
 //go:nosplit
-//go:cgo_unsafe_args
 func syscall_syscall(fn, a1, a2, a3 uintptr) (r1, r2, err uintptr) {
+	args := struct{ fn, a1, a2, a3, r1, r2, err uintptr }{fn, a1, a2, a3, r1, r2, err}
 	entersyscall()
-	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall)), unsafe.Pointer(&fn))
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall)), unsafe.Pointer(&args))
 	exitsyscall()
-	return
+	return args.r1, args.r2, args.err
 }
 func syscall()
 
 //go:linkname syscall_syscallX syscall.syscallX
 //go:nosplit
-//go:cgo_unsafe_args
 func syscall_syscallX(fn, a1, a2, a3 uintptr) (r1, r2, err uintptr) {
+	args := struct{ fn, a1, a2, a3, r1, r2, err uintptr }{fn, a1, a2, a3, r1, r2, err}
 	entersyscall()
-	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscallX)), unsafe.Pointer(&fn))
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscallX)), unsafe.Pointer(&args))
 	exitsyscall()
-	return
+	return args.r1, args.r2, args.err
 }
 func syscallX()
 
 //go:linkname syscall_syscall6 syscall.syscall6
 //go:nosplit
-//go:cgo_unsafe_args
 func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr) {
+	args := struct{ fn, a1, a2, a3, a4, a5, a6, r1, r2, err uintptr }{fn, a1, a2, a3, a4, a5, a6, r1, r2, err}
 	entersyscall()
-	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall6)), unsafe.Pointer(&fn))
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall6)), unsafe.Pointer(&args))
 	exitsyscall()
-	return
+	return args.r1, args.r2, args.err
 }
 func syscall6()
 
-//go:linkname syscall_syscall6X syscall.syscall6X
+//go:linkname syscall_syscall9 syscall.syscall9
 //go:nosplit
 //go:cgo_unsafe_args
-func syscall_syscall6X(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr) {
+func syscall_syscall9(fn, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (r1, r2, err uintptr) {
 	entersyscall()
-	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall6X)), unsafe.Pointer(&fn))
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall9)), unsafe.Pointer(&fn))
 	exitsyscall()
 	return
+}
+func syscall9()
+
+//go:linkname syscall_syscall6X syscall.syscall6X
+//go:nosplit
+func syscall_syscall6X(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr) {
+	args := struct{ fn, a1, a2, a3, a4, a5, a6, r1, r2, err uintptr }{fn, a1, a2, a3, a4, a5, a6, r1, r2, err}
+	entersyscall()
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall6X)), unsafe.Pointer(&args))
+	exitsyscall()
+	return args.r1, args.r2, args.err
 }
 func syscall6X()
 
 //go:linkname syscall_syscallPtr syscall.syscallPtr
 //go:nosplit
-//go:cgo_unsafe_args
 func syscall_syscallPtr(fn, a1, a2, a3 uintptr) (r1, r2, err uintptr) {
+	args := struct{ fn, a1, a2, a3, r1, r2, err uintptr }{fn, a1, a2, a3, r1, r2, err}
 	entersyscall()
-	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscallPtr)), unsafe.Pointer(&fn))
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscallPtr)), unsafe.Pointer(&args))
 	exitsyscall()
-	return
+	return args.r1, args.r2, args.err
 }
 func syscallPtr()
 
 //go:linkname syscall_rawSyscall syscall.rawSyscall
 //go:nosplit
-//go:cgo_unsafe_args
 func syscall_rawSyscall(fn, a1, a2, a3 uintptr) (r1, r2, err uintptr) {
-	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall)), unsafe.Pointer(&fn))
-	return
+	args := struct{ fn, a1, a2, a3, r1, r2, err uintptr }{fn, a1, a2, a3, r1, r2, err}
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall)), unsafe.Pointer(&args))
+	return args.r1, args.r2, args.err
 }
 
 //go:linkname syscall_rawSyscall6 syscall.rawSyscall6
 //go:nosplit
-//go:cgo_unsafe_args
 func syscall_rawSyscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr) {
-	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall6)), unsafe.Pointer(&fn))
-	return
+	args := struct{ fn, a1, a2, a3, a4, a5, a6, r1, r2, err uintptr }{fn, a1, a2, a3, a4, a5, a6, r1, r2, err}
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall6)), unsafe.Pointer(&args))
+	return args.r1, args.r2, args.err
 }
 
-// syscallNoErr is used in crypto/x509 to call into Security.framework and CF.
+// crypto_x509_syscall is used in crypto/x509/internal/macos to call into Security.framework and CF.
 
 //go:linkname crypto_x509_syscall crypto/x509/internal/macos.syscall
 //go:nosplit
-//go:cgo_unsafe_args
 func crypto_x509_syscall(fn, a1, a2, a3, a4, a5 uintptr, f1 float64) (r1 uintptr) {
+	args := struct {
+		fn, a1, a2, a3, a4, a5 uintptr
+		f1                     float64
+		r1                     uintptr
+	}{fn, a1, a2, a3, a4, a5, f1, r1}
 	entersyscall()
-	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall_x509)), unsafe.Pointer(&fn))
+	libcCall(unsafe.Pointer(abi.FuncPCABI0(syscall_x509)), unsafe.Pointer(&args))
 	exitsyscall()
-	return
+	return args.r1
 }
 func syscall_x509()
 
@@ -163,9 +179,51 @@ func pthread_kill(t pthread, sig uint32) {
 }
 func pthread_kill_trampoline()
 
+// osinit_hack is a clumsy hack to work around Apple libc bugs
+// causing fork+exec to hang in the child process intermittently.
+// See go.dev/issue/33565 and go.dev/issue/56784 for a few reports.
+//
+// The stacks obtained from the hung child processes are in
+// libSystem_atfork_child, which is supposed to reinitialize various
+// parts of the C library in the new process.
+//
+// One common stack dies in _notify_fork_child calling _notify_globals
+// (inlined) calling _os_alloc_once, because _os_alloc_once detects that
+// the once lock is held by the parent process and then calls
+// _os_once_gate_corruption_abort. The allocation is setting up the
+// globals for the notification subsystem. See the source code at [1].
+// To work around this, we can allocate the globals earlier in the Go
+// program's lifetime, before any execs are involved, by calling any
+// notify routine that is exported, calls _notify_globals, and doesn't do
+// anything too expensive otherwise. notify_is_valid_token(0) fits the bill.
+//
+// The other common stack dies in xpc_atfork_child calling
+// _objc_msgSend_uncached which ends up in
+// WAITING_FOR_ANOTHER_THREAD_TO_FINISH_CALLING_+initialize. Of course,
+// whatever thread the child is waiting for is in the parent process and
+// is not going to finish anything in the child process. There is no
+// public source code for these routines, so it is unclear exactly what
+// the problem is. An Apple engineer suggests using xpc_date_create_from_current,
+// which empirically does fix the problem.
+//
+// So osinit_hack_trampoline (in sys_darwin_$GOARCH.s) calls
+// notify_is_valid_token(0) and xpc_date_create_from_current(), which makes the
+// fork+exec hangs stop happening. If Apple fixes the libc bug in
+// some future version of macOS, then we can remove this awful code.
+//
+//go:nosplit
+func osinit_hack() {
+	if GOOS == "darwin" { // not ios
+		libcCall(unsafe.Pointer(abi.FuncPCABI0(osinit_hack_trampoline)), nil)
+	}
+	return
+}
+func osinit_hack_trampoline()
+
 // mmap is used to do low-level memory allocation via mmap. Don't allow stack
 // splits, since this function (used by sysAlloc) is called in a lot of low-level
 // parts of the runtime and callers often assume it won't acquire any locks.
+//
 //go:nosplit
 func mmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uint32) (unsafe.Pointer, int) {
 	args := struct {
@@ -228,10 +286,10 @@ func closefd(fd int32) int32 {
 }
 func close_trampoline()
 
+// This is exported via linkname to assembly in runtime/cgo.
+//
 //go:nosplit
 //go:cgo_unsafe_args
-//
-// This is exported via linkname to assembly in runtime/cgo.
 //go:linkname exit
 func exit(code int32) {
 	libcCall(unsafe.Pointer(abi.FuncPCABI0(exit_trampoline)), unsafe.Pointer(&code))
@@ -469,7 +527,8 @@ func pthread_cond_signal(c *pthreadcond) int32 {
 func pthread_cond_signal_trampoline()
 
 // Not used on Darwin, but must be defined.
-func exitThread(wait *uint32) {
+func exitThread(wait *atomic.Uint32) {
+	throw("exitThread")
 }
 
 //go:nosplit
@@ -530,3 +589,6 @@ func setNonblock(fd int32) {
 //go:cgo_import_dynamic libc_pthread_cond_wait pthread_cond_wait "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_pthread_cond_timedwait_relative_np pthread_cond_timedwait_relative_np "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_pthread_cond_signal pthread_cond_signal "/usr/lib/libSystem.B.dylib"
+
+//go:cgo_import_dynamic libc_notify_is_valid_token notify_is_valid_token "/usr/lib/libSystem.B.dylib"
+//go:cgo_import_dynamic libc_xpc_date_create_from_current xpc_date_create_from_current "/usr/lib/libSystem.B.dylib"

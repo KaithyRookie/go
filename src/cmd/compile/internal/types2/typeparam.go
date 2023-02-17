@@ -24,14 +24,12 @@ type TypeParam struct {
 	bound Type      // any type, but underlying is eventually *Interface for correct programs (see TypeParam.iface)
 }
 
-// Obj returns the type name for the type parameter t.
-func (t *TypeParam) Obj() *TypeName { return t.obj }
-
 // NewTypeParam returns a new TypeParam. Type parameters may be set on a Named
 // or Signature type by calling SetTypeParams. Setting a type parameter on more
 // than one type will result in a panic.
 //
-// The constraint argument can be nil, and set later via SetConstraint.
+// The constraint argument can be nil, and set later via SetConstraint. If the
+// constraint is non-nil, it must be fully defined.
 func NewTypeParam(obj *TypeName, constraint Type) *TypeParam {
 	return (*Checker)(nil).newTypeParam(obj, constraint)
 }
@@ -58,6 +56,9 @@ func (check *Checker) newTypeParam(obj *TypeName, constraint Type) *TypeParam {
 	return typ
 }
 
+// Obj returns the type name for the type parameter t.
+func (t *TypeParam) Obj() *TypeName { return t.obj }
+
 // Index returns the index of the type param within its param list, or -1 if
 // the type parameter has not yet been bound to a type.
 func (t *TypeParam) Index() int {
@@ -71,8 +72,10 @@ func (t *TypeParam) Constraint() Type {
 
 // SetConstraint sets the type constraint for t.
 //
-// SetConstraint should not be called concurrently, but once SetConstraint
-// returns the receiver t is safe for concurrent use.
+// It must be called by users of NewTypeParam after the bound's underlying is
+// fully defined, and before using the type parameter in any way other than to
+// form other types. Once SetConstraint returns the receiver, t is safe for
+// concurrent use.
 func (t *TypeParam) SetConstraint(bound Type) {
 	if bound == nil {
 		panic("nil constraint")
